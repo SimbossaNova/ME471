@@ -1,0 +1,236 @@
+
+#####################################################################################
+#####################################################################################
+## COMPLETE THE FUNCTIONS BELOW
+#####################################################################################
+#####################################################################################
+
+import numpy as np
+
+def InitializeEquation(N_NODE,N_PRE_DISP, DISP_NODE, N_ELEM, NNODE_ELE, ELEM_NODE):
+
+    # define your function HERE
+
+    #Return EQ_NUM as a 1D numpy array of shape (n,). (Define 'n' appropriately.)
+    #Return N_DOF as a scalar.
+    #Return LM as a 2D numpy array of shape (m,n). (Define 'm' and 'n' appropriately).
+
+
+    # Initialize EQ_NUM
+    EQ_NUM = np.zeros(N_NODE, dtype=int)
+
+    # First loop for handling prescribed displacements
+    for i in range(N_PRE_DISP):
+        NODE = DISP_NODE[i]-1  # DISP_NODE now used as an array
+        EQ_NUM[NODE] = -(i+1)
+
+    # Second loop for assigning EQ_NUM to remaining nodes
+    ROW = 0
+    for i in range(N_NODE):
+        if EQ_NUM[i] == 0:
+            ROW += 1
+            EQ_NUM[i] = ROW
+
+    # Calculate N_DOF
+    N_DOF = N_NODE - N_PRE_DISP
+
+    # Nested loops for populating LM
+    LM = np.zeros((N_ELEM, NNODE_ELE), dtype=int)
+
+    # Nested loops for populating LM
+    for i in range(N_ELEM):
+        for j in range(NNODE_ELE):
+            NODE = ELEM_NODE[i, j]-1
+            LM[i, j] = EQ_NUM[NODE]
+
+    return EQ_NUM, N_DOF, LM
+
+def AssemblePrescribedDisplacement(N_PRE_DISP, DISP_NODE, DISP_VAL, EQ_NUM):
+
+    # define your function HERE
+
+    #Return UP as a 1D numpy array of shape (n,). (Define 'n' appropriately.)
+
+    UP_size = np.sum(EQ_NUM < 0)
+    UP = np.zeros(UP_size, dtype=float)
+
+    for i in range(N_PRE_DISP):
+        NODE = DISP_NODE[i] - 1  # Adjust for 0-based indexing
+        u = DISP_VAL[i]  # Use DISP_VAL for displacement value
+        ROW = -EQ_NUM[NODE] - 1  # Convert to 0-based index for UP array
+
+        if ROW >= 0:  # Check if ROW is a valid index
+            UP[ROW] = u
+
+    return UP
+
+def AssembleConcentratedNodalForces(N_LOAD, FORCE_NODE, FORCE_VAL, EQ_NUM, N_DOF):
+
+    # Initialize PF with zeros
+    PF = np.zeros(N_DOF,dtype=float)
+
+    # Iterate over each load
+    for i in range(N_LOAD):
+        NODE = FORCE_NODE[i] - 1  # Adjust for 0-based indexing
+        f = FORCE_VAL[i]
+        ROW = EQ_NUM[NODE]
+
+        # Add the force to the correct position in PF
+        if ROW > 0:  # Check if ROW is a valid index
+            PF[ROW - 1] += f  # Adjust for 0-based indexing and add the force value
+
+    return PF
+
+def ElementStiffness(I_ELEM,ELEM_STIFF):
+
+    # define your function HERE
+
+    #Return KEL as a 2D numpy array of shape (n,n). (Define 'n' appropriately.)
+    k = ELEM_STIFF[I_ELEM-1]
+    KEL = k * np.array( [[1, -1], [-1 , 1]] )
+
+
+    return KEL
+
+
+def AssembleGlobalStiffness(KEL, ELEM_NODE, EQ_NUM, I_ELEM, KPP, KPF, KFF, KFP, LM, NNODE_ELE):
+    for i in range(NNODE_ELE):
+        ROW = LM[I_ELEM-1, i-1]
+        for j in range(NNODE_ELE): 
+            COL = LM[I_ELEM-1, j-1]
+
+            # Check if ROW and COL correspond to free or prescribed DOFs
+            if ROW > 0:  # Free DOF
+                if COL > 0:  # Free DOF
+                    KFF[ROW-1, COL-1] += KEL[i, j]
+                else:  # Prescribed DOF
+                    KFP[ROW-1, -COL-1] += KEL[i, j]
+            else:  # Prescribed DOF
+                if COL > 0:  # Free DOF
+                    KPF[-ROW-1, COL-1] += KEL[i, j]
+                else:  # Prescribed DOF
+                    KPP[-ROW-1, -COL-1] += KEL[i, j]
+
+    return KPP, KPF, KFF, KFP
+
+
+
+
+def AssembleModule(N_ELEM, N_LOAD, N_PRE_DISP, ELEM_NODE, ELEM_STIFF, FORCE_NODE, FORCE_VAL, DISP_NODE, DISP_VAL, EQ_NUM, N_DOF, LM, NNODE_ELE):
+
+     UP = AssemblePrescribedDisplacement(N_PRE_DISP, DISP_NODE, DISP_VAL, EQ_NUM)
+
+     PF = AssembleConcentratedNodalForces(N_LOAD, FORCE_NODE, FORCE_VAL, EQ_NUM, N_DOF)
+
+    # Initialize KPP, KPF, KFF, KFP
+    # KPP, KPF, KFF, KFP are 2D numpy arrays of appropriate sizes.
+    # define your initialization HERE
+    
+     KPP = np.zeros((N_PRE_DISP, N_PRE_DISP)) 
+     KPF = np.zeros((N_PRE_DISP, N_DOF))
+     KFF = np.zeros((N_DOF, N_DOF))
+     KFP = np.zeros((N_DOF, N_PRE_DISP))
+
+    ## assemble global stiffness
+    # iterate over each element "I_ELEM"
+     for I_ELEM in range(N_ELEM):
+
+        ## get element stiffness matrix
+         KEL=ElementStiffness(I_ELEM,ELEM_STIFF)
+
+        ## assemble global matrices
+         KPP,KPF,KFF,KFP=AssembleGlobalStiffness(KEL,ELEM_NODE,EQ_NUM,I_ELEM,KPP,KPF,KFF,KFP,LM, NNODE_ELE)
+
+     return KPP,KPF,KFF,KFP,PF,UP
+
+
+
+def SolveModule(N_NODE, KPP, KPF, KFF, KFP, PF, UP, EQ_NUM):
+    # Solve for UF
+    UF = np.linalg.inv(KFF).dot(PF - KFP.dot(UP))
+
+    # Calculate PP
+    PP = KPP.dot(UP) + KPF.dot(UF)
+
+    # Initialize UUR and PUR
+    UUR = np.zeros(N_NODE)
+    PUR = np.zeros(N_NODE)
+
+    # Populate UUR and PUR
+    for i in range(N_NODE):
+        ROW = EQ_NUM[i]
+        if ROW > 0:
+            UUR[i] = UF[ROW - 1]
+            PUR[i] = PF[ROW - 1]
+        else:
+            UUR[i] = UP[-ROW - 1]
+            PUR[i] = PP[-ROW - 1]
+
+    return UUR, PUR
+
+
+
+
+
+#####################################################################################
+#####################################################################################
+## DO NOT MODIFY THE REMAINING OF THIS FILE
+## The following functions are provided to you - do not make any changes
+#####################################################################################
+#####################################################################################
+
+import numpy as np
+import csv
+import matplotlib.pyplot as plt
+
+def ReadInput(filename, nnode_ele):
+# % INPUT:
+# % filename: name of the file with input values
+# % nnode_ele: number of nodes per element
+#
+# % OUTPUT:
+# % N_NODE, the (integer) number of nodes
+# % N_ELEM, the (integer) number of elements
+# % N_LOAD, the (integer) number of nonzero nodal forces, i.e. Pf
+# % N_PRE_DISP, the (integer) number of nodes with prescribed displacement, i.e. Up
+# % ELEM_NODE(N_ELEM, nnode_ele), 2d numpy array that contains node numbers (integers) for each element
+# % ELEM_STIFF(N_ELEM,), 1d numpy array that contains stiffness value (real) and thermal expansion coefficient for each element
+# % FORCE_NODE(N_LOAD,), 1d numpy array that contains the node numbers (integer) where forces are applied and the direction
+# % FORCE_VAL(N_LOAD,), 1d numpy array that contains the value of the forces (real) corresponding to the numbers in FORCE_NODE
+# % DISP_NODE(N_PRE_DISP,), 1d numpy array that contains the node numbers (integer) where boundary conditions are imposed and the direction
+# % DISP_VAL(N_PRE_DISP,),  1d numpy array that contains the value of the prescribed displacements (real) corresponding to the numbers in DISP_NODE
+
+    with open(filename, newline = '') as fin:
+        mesh_data = csv.reader(fin, delimiter=',')
+        line = next(mesh_data)  # gets the first line
+        [n_node, n_elem, n_load, n_pre_disp] = list(map(int, line))
+        # Get element
+        elem_node = np.zeros((n_elem,nnode_ele),dtype=int)
+
+        elem_stiff = np.zeros((n_elem,))
+
+        for i in range(n_elem):
+            line = next(mesh_data)
+            line_list = list(map(float, line))
+            elem_node[i] = line_list[:2]
+            elem_stiff[i] = line_list[2]
+
+        # Get external forces at nodes
+        force_node = np.zeros((n_load,), dtype=int)
+        force_val = np.zeros(n_load)
+        for i in range(n_load):
+            line = next(mesh_data)
+            line_list = list(map(float, line))
+            force_node[i] = line_list[0]
+            force_val[i] = line_list[1]
+
+        # Get boundary conditions
+        disp_node = np.zeros((n_pre_disp,), dtype=int)
+        disp_val = np.zeros(n_pre_disp)
+        for i in range(n_pre_disp):
+            line = next(mesh_data)
+            line_list = list(map(float, line))
+            disp_node[i] = line_list[0]
+            disp_val[i] = line_list[1]
+
+    return(n_node, n_elem, n_load, n_pre_disp,elem_node, elem_stiff, force_node, force_val, disp_node, disp_val)
